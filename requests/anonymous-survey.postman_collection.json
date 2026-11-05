@@ -1,0 +1,63 @@
+{
+  "info": {
+    "name": "Anonymous Survey API",
+    "description": "Requests for the locally running API Gateway. Login cookies are retained by the Postman cookie jar.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "student1Password", "value": "" },
+    { "key": "student2Password", "value": "" },
+    { "key": "staffPassword", "value": "" },
+    { "key": "resetToken", "value": "" },
+    { "key": "newPassword", "value": "" },
+    { "key": "surveyId", "value": "1" },
+    { "key": "otherStudentSurveyId", "value": "1" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login student1",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"username\": \"student1\",\n  \"password\": \"{{student1Password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/auth/login" }
+        },
+        {
+          "name": "Login student2",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"username\": \"student2\",\n  \"password\": \"{{student2Password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/auth/login" }
+        },
+        {
+          "name": "Login staff",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"username\": \"staff\",\n  \"password\": \"{{staffPassword}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/auth/login" }
+        },
+        { "name": "Me", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/auth/me" } },
+        { "name": "Logout", "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/auth/logout" } },
+        { "name": "Request password reset", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"username\": \"student1\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/auth/password-reset/request" } },
+        { "name": "Confirm password reset", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"new_password\": \"{{newPassword}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/auth/password-reset/confirm" } }
+      ]
+    },
+    {
+      "name": "Surveys",
+      "item": [
+        {
+          "name": "List surveys",
+          "event": [{ "listen": "test", "script": { "exec": ["const body = pm.response.json();", "const active = body.items.find((item) => item.status === 'active');", "const closed = body.items.find((item) => item.status === 'closed');", "if (active) pm.collectionVariables.set('surveyId', active.id);", "if (closed) pm.collectionVariables.set('closedSurveyId', closed.id);"], "type": "text/javascript" } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/surveys?limit=20&offset=0" }
+        },
+        { "name": "Read survey by ID", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/surveys/{{surveyId}}" } },
+        {
+          "name": "Create survey with hostile extra fields",
+          "event": [{ "listen": "test", "script": { "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('createdSurveyId', pm.response.json().id);"], "type": "text/javascript" } }],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"subject_id\": 1,\n  \"teacher_id\": 1,\n  \"period_start\": \"2026-09-01\",\n  \"period_end\": \"2026-12-31\",\n  \"status\": \"closed\",\n  \"created_by\": 1,\n  \"role\": \"student\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/surveys" }
+        },
+        { "name": "Publish survey", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"status\": \"active\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/surveys/{{createdSurveyId}}/status" } },
+        { "name": "Close survey",
+          "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"status\": \"closed\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/surveys/{{createdSurveyId}}/status" }
+        },
+        { "name": "Submit response", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"rating_materials\": 5,\n  \"rating_clarity\": 4,\n  \"rating_engagement\": 5\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/api/v1/surveys/{{surveyId}}/responses" } },
+        { "name": "Read results (staff, closed survey with >=5 responses)", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/surveys/{{closedSurveyId}}/results" } },
+        { "name": "Request summary (501 stub)", "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/surveys/{{closedSurveyId}}/summaries" } }
+      ]
+    }
+  ]
+}

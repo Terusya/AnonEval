@@ -1,0 +1,132 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./db/02_roles.sh:/docker-entrypoint-initdb.d/02_roles.sh:ro
+      - ./db/roles.sql:/scripts/roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: survey_app
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  seed:
+    build: ./api
+    command: ["python", "-m", "app.seed"]
+    environment: &app_environment
+      DB_HOST: postgres
+      DB_NAME: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      DB_USER: app_user
+      DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in .env}
+      PEPPER_SECRET: ${PEPPER_SECRET:?Set PEPPER_SECRET in .env}
+      APP_INTERNAL_SECRET: ${APP_INTERNAL_SECRET:?Set APP_INTERNAL_SECRET in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      DEMO_STUDENT1_PASSWORD: ${DEMO_STUDENT1_PASSWORD:?Set demo passwords in .env}
+      DEMO_STUDENT2_PASSWORD: ${DEMO_STUDENT2_PASSWORD:?Set demo passwords in .env}
+      DEMO_STAFF_PASSWORD: ${DEMO_STAFF_PASSWORD:?Set demo passwords in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  auth-service:
+    build: ./api
+    command: ["uvicorn", "app.auth_main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *app_environment
+      REDIS_URL: redis://redis:6379/0
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
+      RESET_TTL_SECONDS: ${RESET_TTL_SECONDS:-900}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  survey-service:
+    build: ./api
+    command: ["uvicorn", "app.survey_main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *app_environment
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  llm-worker:
+    build: ./api
+    command: ["python", "-m", "app.worker_main"]
+    environment:
+      <<: *app_environment
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    expose:
+      - "80"
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:1.27-alpine
+    environment:
+      APP_INTERNAL_SECRET: ${APP_INTERNAL_SECRET:?Set APP_INTERNAL_SECRET in .env}
+      NGINX_ENVSUBST_FILTER: ^APP_INTERNAL_SECRET$
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      - web
+      - auth-service
+      - survey-service
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
